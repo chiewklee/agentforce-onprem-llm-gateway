@@ -1,0 +1,220 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<mule xmlns:anypoint-mq="http://www.mulesoft.org/schema/mule/anypoint-mq"
+    xmlns:http="http://www.mulesoft.org/schema/mule/http"
+    xmlns:ee="http://www.mulesoft.org/schema/mule/ee/core"
+    xmlns="http://www.mulesoft.org/schema/mule/core"
+    xmlns:doc="http://www.mulesoft.org/schema/mule/documentation"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xsi:schemaLocation="
+        http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+        http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd
+        http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/ee/core/current/mule-ee.xsd
+        http://www.mulesoft.org/schema/mule/anypoint-mq http://www.mulesoft.org/schema/mule/anypoint-mq/current/mule-anypoint-mq.xsd">
+
+    <configuration-properties doc:name="Config Properties" file="config.yaml" />
+
+    <anypoint-mq:config name="Anypoint_MQ_Config" doc:name="Anypoint MQ Config">
+        <anypoint-mq:connection
+            url="${mq.url}"
+            clientId="${mq.clientId}"
+            clientSecret="${mq.clientSecret}" />
+    </anypoint-mq:config>
+
+    <http:request-config name="Ollama_Request_Config" doc:name="Ollama HTTP Config" responseTimeout="120000">
+        <http:request-connection host="${ollama.host}" port="${ollama.port}" />
+    </http:request-config>
+
+    <!-- ─────────────────────────────────────────────────────────────────────
+         Subscribe to the chat queue, forward the request to the local Ollama
+         instance, then publish the response to the chat-completed queue.
+         ───────────────────────────────────────────────────────────────────── -->
+    <flow name="ollama-worker" doc:id="e4fabeb3-e613-4871-a229-90f06f25620c" maxConcurrency="1">
+        <!-- Fetch/lock ONE message at a time (default prefetch locks up to 30 while
+             the flow processes serially). Lock timeout > Ollama's 120s so a message
+             is released back to the queue if the worker dies mid-request. -->
+        <anypoint-mq:subscriber doc:name="Subscribe: chat"
+            config-ref="Anypoint_MQ_Config"
+            destination="agentforce-llm-open-connector-chat"
+            acknowledgementTimeout="3"
+            acknowledgementTimeoutUnit="MINUTES">
+            <anypoint-mq:subscriber-type>
+                <anypoint-mq:prefetch maxLocalMessages="1" />
+            </anypoint-mq:subscriber-type>
+        </anypoint-mq:subscriber>
+        <!-- Raw request as Salesforce sent it (before reshaping), to see fields like tools/tool_choice -->
+        <logger level="INFO" doc:name="Log RAW request"
+            message="#[%dw 2.0 output application/java --- '[ollama-worker] RAW taskId=' ++ (attributes.properties.taskId default 'unknown') ++ ' payload=' ++ write(payload, 'application/json')]" />
+        <ee:transform doc:name="Capture taskId + build Ollama request">
+            <ee:message>
+                <ee:set-payload><![CDATA[%dw 2.0
+output application/json
+// Map Salesforce-registered display names -> real Ollama model IDs.
+// Anything already a valid Ollama ID passes through; empty/unknown falls back to the default.
+var ollamaModels = ["qwen3:32b", "llama3:8b", "llama3.2:latest", "gemma4:26b", "gpt-oss:20b"]
+var modelAliases = {
+    "On-Prem Qwen": "qwen3:32b",
+    "On-Prem Llama": "llama3:8b",
+    "On-Prem Gemma": "gemma4:26b",
+    // Model Builder "Connect an OpenAI model" path (used for the agent router)
+    "gpt-4.1-2025-04-14": "qwen3:32b",
+    "gpt-4-0613": "qwen3:32b"
+}
+fun resolveModel(m) =
+    if (isEmpty(m)) "${ollama.model}"
+    else if (modelAliases[m] != null) modelAliases[m]
+    else if (ollamaModels contains m) m
+    else "${ollama.model}"
+// qwen3:32b runs ~11 tokens/s on this Mac: 600 tokens ≈ 55s, leaving headroom in the
+// 120s gateway/Einstein window. Larger requests (Salesforce sends 4096) time out.
+var maxTokensCap = { "qwen3:32b": 600 }
+var resolvedModel = resolveModel(payload.model)
+var requestedTokens = payload.max_tokens default ${ollama.defaultMaxTokens}
+// The OpenAI-model path sends content as parts ([{type:"text", text:"..."}]);
+// Ollama only accepts a string, so join the text parts.
+fun textOf(c) = if (c is Array) ((c filter ($."type" == "text")) map $.text) joinBy "\n" else c
+// OpenAI sends tool-call arguments as a JSON string; Ollama requires an object (400 otherwise).
+fun argsObj(a) = if (a is String) (if (isEmpty(a)) {} else read(a, "application/json")) else (a default {})
+fun toOllamaMessage(m) = do {
+    var base = (m - "content") ++ {content: textOf(m.content) default ""}
+    ---
+    if (isEmpty(m.tool_calls)) base
+    else (base - "tool_calls") ++ {
+        tool_calls: m.tool_calls map ((tc) -> (tc - "function") ++ {
+            function: {name: tc.function.name, arguments: argsObj(tc.function.arguments)}
+        })
+    }
+}
+---
+{
+    model: resolvedModel,
+    messages: payload.messages map toOllamaMessage($),
+    // Agent router sends OpenAI-style tools (go_to_<subagent>, actions); Ollama accepts the same shape.
+    // tool_choice / parallel_tool_calls have no Ollama equivalent and are dropped.
+    (tools: payload.tools) if (!isEmpty(payload.tools)),
+    think: payload.enable_thinking default false,
+    stream: false,
+    options: {
+        (temperature: payload.temperature) if payload.temperature?,
+        num_predict: if (maxTokensCap[resolvedModel] != null) min([requestedTokens, maxTokensCap[resolvedModel]]) else requestedTokens
+    }
+}]]></ee:set-payload>
+            </ee:message>
+            <ee:variables>
+                <ee:set-variable variableName="taskId"><![CDATA[%dw 2.0
+output application/java
+---
+attributes.properties.taskId default "unknown"]]></ee:set-variable>
+                <!-- Seconds since the gateway published the request (-1 if the
+                     gateway didn't send publishedAt, i.e. older gateway build). -->
+                <ee:set-variable variableName="requestAgeSeconds"><![CDATA[%dw 2.0
+output application/java
+---
+if (isEmpty(attributes.properties.publishedAt)) -1
+else ((now() as Number {unit: "milliseconds"}) - (attributes.properties.publishedAt as Number)) / 1000]]></ee:set-variable>
+            </ee:variables>
+        </ee:transform>
+        <!-- The gateway stops waiting after 120s and returns 504. Anything older
+             has no caller left — ACK and drop it instead of burning Ollama time. -->
+        <choice doc:name="Request still wanted?">
+            <when expression="#[vars.requestAgeSeconds > 120]">
+                <logger level="WARN" doc:name="Log SKIP stale request"
+                    message="#['[ollama-worker] SKIP taskId=' ++ vars.taskId ++ ' ageSeconds=' ++ (vars.requestAgeSeconds as String) ++ ' (gateway already timed out)']" />
+            </when>
+            <otherwise>
+        <logger level="INFO" doc:name="Log Ollama REQUEST"
+            message="#[%dw 2.0 output application/java --- '[ollama-worker] REQUEST taskId=' ++ vars.taskId ++ ' payload=' ++ write(payload, 'application/json')]" />
+        <http:request method="POST" config-ref="Ollama_Request_Config"
+            path="/api/chat" doc:name="Call Ollama">
+            <http:headers><![CDATA[#[{
+    "Content-Type": "application/json",
+    "Authorization": "Bearer ${ollama.apiKey}"
+}]]]></http:headers>
+        </http:request>
+        <ee:transform doc:name="Reshape native Ollama response to OpenAI format">
+            <ee:message>
+                <ee:set-payload><![CDATA[%dw 2.0
+output application/json
+// Ollama returns tool-call arguments as an object with no id; OpenAI callers
+// (the agent router) expect an id and arguments as a JSON string.
+var toolCalls = payload.message.tool_calls default []
+---
+{
+    id: "chatcmpl-" ++ (uuid()[0 to 7]),
+    object: "chat.completion",
+    created: now() as Number { unit: "seconds" },
+    model: payload.model,
+    choices: [
+        {
+            index: 0,
+            message: {
+                role: "assistant",
+                content: payload.message.content default "",
+                (reasoning: payload.message.thinking) if payload.message.thinking?,
+                (tool_calls: toolCalls map ((tc) -> {
+                    id: tc.id default ("call_" ++ ((uuid() replace "-" with "")[0 to 23])),
+                    "type": "function",
+                    function: {
+                        name: tc.function.name,
+                        arguments: write(tc.function.arguments default {}, "application/json", {indent: false})
+                    }
+                })) if (!isEmpty(toolCalls))
+            },
+            finish_reason: if (!isEmpty(toolCalls)) "tool_calls" else (payload.done_reason default "stop")
+        }
+    ],
+    usage: {
+        prompt_tokens: payload.prompt_eval_count default 0,
+        completion_tokens: payload.eval_count default 0,
+        total_tokens: (payload.prompt_eval_count default 0) + (payload.eval_count default 0)
+    }
+}]]></ee:set-payload>
+            </ee:message>
+        </ee:transform>
+        <logger level="INFO" doc:name="Log Ollama RESPONSE"
+            message="#[%dw 2.0 output application/java --- '[ollama-worker] RESPONSE taskId=' ++ vars.taskId ++ ' payload=' ++ write(payload, 'application/json')]" />
+        <anypoint-mq:publish doc:name="Publish to chat-completed queue"
+            config-ref="Anypoint_MQ_Config"
+            destination="agentforce-llm-open-connector-chat-completed">
+            <anypoint-mq:properties><![CDATA[#[{"taskId": vars.taskId default "unknown"}]]]></anypoint-mq:properties>
+        </anypoint-mq:publish>
+            </otherwise>
+        </choice>
+
+        <!-- ─────────────────────────────────────────────────────────────────
+             On any failure (Ollama 400/404/5xx, timeout, transform error),
+             ACK the message (on-error-continue) so it is NOT redelivered in a
+             loop, and publish an OpenAI-shaped error back to the completed
+             queue keyed by the same taskId so the caller gets a clean error
+             instead of a 504 timeout.
+             ───────────────────────────────────────────────────────────────── -->
+        <error-handler>
+            <on-error-continue type="ANY" doc:name="Ollama call failed → return error">
+                <logger level="ERROR" doc:name="Log Ollama ERROR"
+                    message="#[%dw 2.0 output application/java --- '[ollama-worker] ERROR taskId=' ++ (vars.taskId default 'unknown') ++ ' errorType=' ++ (error.errorType.namespace default '') ++ ':' ++ (error.errorType.identifier default '') ++ ' message=' ++ (error.description default '')]" />
+                <ee:transform doc:name="Build OpenAI-shaped error response">
+                    <ee:message>
+                        <ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+{
+    id: "chatcmpl-error-" ++ (uuid()[0 to 7]),
+    object: "error",
+    error: {
+        message: error.description default "LLM request failed",
+        "type": (error.errorType.namespace default "MULE") ++ ":" ++ (error.errorType.identifier default "UNKNOWN"),
+        code: error.errorType.identifier default "UNKNOWN"
+    }
+}]]></ee:set-payload>
+                    </ee:message>
+                </ee:transform>
+                <anypoint-mq:publish doc:name="Publish error to chat-completed queue"
+                    config-ref="Anypoint_MQ_Config"
+                    destination="agentforce-llm-open-connector-chat-completed">
+                    <anypoint-mq:properties><![CDATA[#[{"taskId": vars.taskId default "unknown"}]]]></anypoint-mq:properties>
+                </anypoint-mq:publish>
+            </on-error-continue>
+        </error-handler>
+    </flow>
+
+</mule>

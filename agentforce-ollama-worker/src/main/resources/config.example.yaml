@@ -1,0 +1,12 @@
+# Copy to config.yaml (git-ignored) and fill in.
+mq:
+  url: "https://mq-<region>.anypoint.mulesoft.com/api/v1/organizations/<org-id>/environments/<env-id>"
+  clientId: "<anypoint-mq-client-id>"
+  clientSecret: "<anypoint-mq-client-secret>"
+
+ollama:
+  host: "<ollama-host>"
+  port: "11434"
+  model: "qwen3:32b"
+  defaultMaxTokens: "2048"
+  apiKey: "<ollama-api-key>"

@@ -1,0 +1,14 @@
+# Local credentials: each Mule project has a config.example.yaml template instead
+**/src/main/resources/config.yaml
+
+# Build and tooling output
+target/
+.mule/
+.tooling-project/
+*.jar
+*.class
+
+# Local editor / assistant settings
+.DS_Store
+.claude/
+

@@ -1,0 +1,35 @@
+{
+	"folders": [
+		{
+			"path": "agentforce-ollama-worker"
+		},
+		{
+			"path": "agentforce-gateway"
+		},
+		{
+			"path": "../../../AnypointCodeBuilder/runtime/mule-enterprise-standalone-4.11.2/logs"
+		},
+		{
+			"path": "."
+		}
+	],
+	"settings": {
+		"files.exclude": {
+			"**/.apivcs": true,
+			"**/.gitignore": true,
+			"**/.git": true,
+			"**/.designer.json": true,
+			"**/.exchange.xml": true,
+			"**/.vscode": true,
+			"**/.mvn": true,
+			"**/mvnw": true,
+			"**/mvnw.cmd": true,
+			"**/.tmp": true,
+			"**/.settings": true,
+			"**/.exchange_modules_tmp": true,
+			"**/.github": true
+		},
+		"editor.acceptSuggestionOnEnter": "on",
+		"editor.wordBasedSuggestions": "off"
+	}
+}

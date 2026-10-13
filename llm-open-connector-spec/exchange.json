@@ -1,0 +1,9 @@
+{
+  "groupId": "YOUR_ANYPOINT_ORG_ID",
+  "assetId": "salesforce-llm-open-connector",
+  "version": "1.0.0",
+  "apiVersion": "v1",
+  "main": "llm-open-connector.yaml",
+  "name": "Salesforce LLM Open Connector API",
+  "classifier": "oas"
+}

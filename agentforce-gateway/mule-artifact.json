@@ -1,0 +1,5 @@
+{
+  "name": "agentforce-gateway",
+  "minMuleVersion": "4.11.0",
+  "javaSpecificationVersions": ["17"]
+}

@@ -1,0 +1,146 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<mule xmlns:os="http://www.mulesoft.org/schema/mule/os"
+    xmlns:anypoint-mq="http://www.mulesoft.org/schema/mule/anypoint-mq"
+    xmlns:ee="http://www.mulesoft.org/schema/mule/ee/core"
+    xmlns="http://www.mulesoft.org/schema/mule/core"
+    xmlns:doc="http://www.mulesoft.org/schema/mule/documentation"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xsi:schemaLocation="
+        http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+        http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/ee/core/current/mule-ee.xsd
+        http://www.mulesoft.org/schema/mule/anypoint-mq http://www.mulesoft.org/schema/mule/anypoint-mq/current/mule-anypoint-mq.xsd
+        http://www.mulesoft.org/schema/mule/os http://www.mulesoft.org/schema/mule/os/current/mule-os.xsd">
+
+    <configuration-properties doc:name="Config Properties" file="config.yaml" />
+
+    <anypoint-mq:config name="Anypoint_MQ_Config" doc:name="Anypoint MQ Config">
+        <anypoint-mq:connection
+            url="${mq.url}"
+            clientId="${mq.clientId}"
+            clientSecret="${mq.clientSecret}" />
+    </anypoint-mq:config>
+
+    <os:config name="ObjectStore_Config" doc:name="ObjectStore Config">
+        <os:connection />
+    </os:config>
+    <os:object-store name="Object_store" doc:name="Object store" config-ref="ObjectStore_Config" />
+
+    <!-- ─────────────────────────────────────────────────────────────────────
+         Receive /chat/completions from Agentforce, publish to MQ, then
+         block-poll the ObjectStore until the local Ollama worker responds.
+         ───────────────────────────────────────────────────────────────────── -->
+    <flow name="post:\chat\completions:application\json:llm-open-connector-config">
+        <ee:transform doc:name="Mint taskId">
+            <ee:message>
+                <ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+payload]]></ee:set-payload>
+            </ee:message>
+            <ee:variables>
+                <ee:set-variable variableName="taskId"><![CDATA[%dw 2.0
+output application/java
+---
+uuid()]]></ee:set-variable>
+                <!-- The agent router (OpenAI-model path) sends stream:true and only accepts SSE -->
+                <ee:set-variable variableName="wantStream"><![CDATA[%dw 2.0
+output application/java
+---
+payload.stream default false]]></ee:set-variable>
+                <ee:set-variable variableName="includeUsage"><![CDATA[%dw 2.0
+output application/java
+---
+payload.stream_options.include_usage default false]]></ee:set-variable>
+            </ee:variables>
+        </ee:transform>
+        <anypoint-mq:publish doc:name="Publish to chat queue"
+            config-ref="Anypoint_MQ_Config"
+            destination="agentforce-llm-open-connector-chat">
+            <!-- publishedAt (epoch ms) lets the worker drop requests this gateway has already timed out -->
+            <anypoint-mq:properties><![CDATA[#[{"taskId": vars.taskId, "publishedAt": now() as Number {unit: "milliseconds"} as String}]]]></anypoint-mq:properties>
+        </anypoint-mq:publish>
+        <flow-ref doc:name="Wait for Ollama response" name="get-llm-response" />
+        <choice doc:name="Stream requested?">
+            <!-- Replay the completed answer as an OpenAI-style SSE stream (the full answer
+                 has already arrived via MQ, so this is one burst, not token-by-token).
+                 Worker errors (object:"error") still go back as plain JSON. -->
+            <when expression="#[vars.wantStream == true and payload.object == 'chat.completion']">
+                <ee:transform doc:name="Return response as SSE stream">
+                    <ee:message>
+                        <ee:set-payload><![CDATA[%dw 2.0
+output text/plain
+var choice = payload.choices[0]
+var msg = choice.message
+var hasTools = !isEmpty(msg.tool_calls)
+var base = {id: payload.id, object: "chat.completion.chunk", created: payload.created, model: payload.model}
+fun event(o) = "data: " ++ write(o, "application/json", {indent: false}) ++ "\n\n"
+var delta = {
+    role: "assistant",
+    content: if (hasTools and isEmpty(msg.content)) null else (msg.content default ""),
+    (tool_calls: msg.tool_calls map ((tc, i) -> {index: i} ++ tc)) if hasTools
+}
+---
+event(base ++ {choices: [{index: 0, delta: delta, finish_reason: null}]})
+    ++ event(base ++ {choices: [{index: 0, delta: {}, finish_reason: choice.finish_reason}]})
+    ++ (if (vars.includeUsage == true) event(base ++ {choices: [], usage: payload.usage}) else "")
+    ++ "data: [DONE]\n\n"]]></ee:set-payload>
+                    </ee:message>
+                    <ee:variables>
+                        <ee:set-variable variableName="responseContentType"><![CDATA["text/event-stream"]]></ee:set-variable>
+                    </ee:variables>
+                </ee:transform>
+            </when>
+            <otherwise>
+                <ee:transform doc:name="Return response">
+                    <ee:message>
+                        <ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+payload]]></ee:set-payload>
+                    </ee:message>
+                </ee:transform>
+            </otherwise>
+        </choice>
+    </flow>
+
+    <!-- ─────────────────────────────────────────────────────────────────────
+         Subscribe to chat-completed queue and store the Ollama response in
+         the ObjectStore so the polling sub-flow above can pick it up.
+         ───────────────────────────────────────────────────────────────────── -->
+    <flow name="post-chat-llm-response" doc:id="9deaac69-eb97-4363-b0ce-2224ad52ccaa">
+        <anypoint-mq:subscriber doc:name="Subscribe: chat-completed"
+            config-ref="Anypoint_MQ_Config"
+            destination="agentforce-llm-open-connector-chat-completed" />
+        <ee:transform doc:name="Capture taskId">
+            <ee:message>
+                <ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+payload]]></ee:set-payload>
+            </ee:message>
+            <ee:variables>
+                <ee:set-variable variableName="taskId"><![CDATA[%dw 2.0
+output application/java
+---
+attributes.properties.taskId]]></ee:set-variable>
+            </ee:variables>
+        </ee:transform>
+        <os:store doc:name="Save response by taskId"
+            objectStore="Object_store"
+            key="#[vars.taskId]" />
+    </flow>
+
+    <!-- ─────────────────────────────────────────────────────────────────────
+         Poll ObjectStore up to 120 times (1s apart) for the taskId key, then
+         remove the entry so answered requests don't accumulate.
+         ───────────────────────────────────────────────────────────────────── -->
+    <sub-flow name="get-llm-response" doc:id="92b07ae8-af0a-4d43-aeae-7288db7e18f1">
+        <until-successful maxRetries="120" millisBetweenRetries="1000"
+            doc:name="Wait for response (max 120s)">
+            <os:retrieve key="#[vars.taskId]" objectStore="Object_store" />
+        </until-successful>
+        <os:remove doc:name="Remove response by taskId" key="#[vars.taskId]" objectStore="Object_store" />
+    </sub-flow>
+
+</mule>

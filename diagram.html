@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Agentforce On-Prem LLM Gateway</title>
+  <style>
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: #f1f5f9;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      padding: 40px;
+    }
+
+    h1 { font-size: 17px; font-weight: 600; color: #1e293b; margin-bottom: 32px; }
+
+    /* Zone wrappers */
+    .zone {
+      width: 360px;
+      border-radius: 16px;
+      padding: 20px 24px 24px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 0;
+    }
+
+    .zone-cloud {
+      background: #dbeafe;
+      border: 2px solid #3b82f6;
+    }
+
+    .zone-onprem {
+      background: #dcfce7;
+      border: 2px solid #22c55e;
+    }
+
+    .zone-title {
+      font-size: 11px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 1.2px;
+      margin-bottom: 16px;
+      align-self: flex-start;
+    }
+
+    .zone-cloud  .zone-title { color: #1d4ed8; }
+    .zone-onprem .zone-title { color: #15803d; }
+
+    /* Boxes */
+    .box {
+      width: 100%;
+      background: #fff;
+      border-radius: 10px;
+      padding: 13px 16px;
+      text-align: center;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.08);
+      border: 1.5px solid #e2e8f0;
+    }
+
+    .box-name { font-size: 13.5px; font-weight: 600; color: #1e293b; margin-bottom: 3px; }
+    .box-sub  { font-size: 11.5px; color: #64748b; }
+
+    /* Arrows inside zone */
+    .inner-arrow {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      height: 36px;
+    }
+
+    .inner-arrow .line {
+      width: 2px;
+      flex: 1;
+      background: #93c5fd;
+    }
+
+    .inner-arrow.green .line { background: #86efac; }
+
+    .inner-arrow .head {
+      width: 0; height: 0;
+      border-left: 6px solid transparent;
+      border-right: 6px solid transparent;
+      border-top: 8px solid #60a5fa;
+    }
+
+    .inner-arrow.green .head { border-top-color: #4ade80; }
+
+    /* Arrow between zones */
+    .between-arrow {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      height: 44px;
+    }
+
+    .between-arrow .line {
+      width: 2px;
+      flex: 1;
+      background: #94a3b8;
+    }
+
+    .between-arrow .head {
+      width: 0; height: 0;
+      border-left: 7px solid transparent;
+      border-right: 7px solid transparent;
+      border-bottom: 9px solid #64748b;
+    }
+
+    .between-arrow .label {
+      font-size: 10px;
+      color: #94a3b8;
+      font-weight: 500;
+      margin: 2px 0;
+    }
+  </style>
+</head>
+<body>
+
+  <h1>Agentforce On-Prem LLM Gateway</h1>
+
+  <!-- CLOUD ZONE -->
+  <div class="zone zone-cloud">
+    <div class="zone-title">☁️ &nbsp;Cloud</div>
+
+    <div class="box">
+      <div class="box-name">Agentforce &nbsp;·&nbsp; curl</div>
+      <div class="box-sub">POST /api/chat/completions</div>
+    </div>
+
+    <div class="inner-arrow"><div class="line"></div><div class="head"></div></div>
+
+    <div class="box">
+      <div class="box-name">agentforce-gateway</div>
+      <div class="box-sub">CloudHub 2.0 &nbsp;·&nbsp; MuleSoft</div>
+    </div>
+
+    <div class="inner-arrow"><div class="line"></div><div class="head"></div></div>
+
+    <div class="box">
+      <div class="box-name">Anypoint MQ</div>
+      <div class="box-sub">chat queue &nbsp;·&nbsp; chat-completed queue</div>
+    </div>
+  </div>
+
+  <!-- BETWEEN ARROW -->
+  <div class="between-arrow">
+    <div class="head"></div>
+    <div class="line"></div>
+    <div class="label">outbound: subscribe + publish</div>
+    <div class="line"></div>
+  </div>
+
+  <!-- ON-PREM ZONE -->
+  <div class="zone zone-onprem">
+    <div class="zone-title">🖥️ &nbsp;On-Premises</div>
+
+    <div class="box">
+      <div class="box-name">agentforce-ollama-worker</div>
+      <div class="box-sub">Local Machine &nbsp;·&nbsp; MuleSoft</div>
+    </div>
+
+    <div class="inner-arrow green"><div class="line"></div><div class="head"></div></div>
+
+    <div class="box">
+      <div class="box-name">Ollama</div>
+      <div class="box-sub">qwen3:32b &nbsp;·&nbsp; gemma4:26b &nbsp;·&nbsp; llama3:8b</div>
+    </div>
+  </div>
+
+</body>
+</html>

@@ -1,0 +1,75 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+    Implements the Salesforce LLM Open Connector API v1
+    Spec: llm-open-connector.yaml (bundled as reference)
+    Path: POST /api/chat/completions
+-->
+<mule xmlns="http://www.mulesoft.org/schema/mule/core"
+    xmlns:http="http://www.mulesoft.org/schema/mule/http"
+    xmlns:ee="http://www.mulesoft.org/schema/mule/ee/core"
+    xmlns:doc="http://www.mulesoft.org/schema/mule/documentation"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xsi:schemaLocation="
+        http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+        http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd
+        http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/ee/core/current/mule-ee.xsd">
+
+    <http:listener-config name="llm-open-connector-httpListenerConfig">
+        <http:listener-connection host="0.0.0.0" port="8081" />
+    </http:listener-config>
+
+    <!-- POST /api/chat/completions — Salesforce LLM Open Connector API v1 -->
+    <flow name="llm-open-connector-main">
+        <http:listener config-ref="llm-open-connector-httpListenerConfig" path="/api/chat/completions">
+            <http:response statusCode="#[vars.httpStatus default 200]">
+                <http:headers>#[{"Content-Type": vars.responseContentType default "application/json"}]</http:headers>
+            </http:response>
+            <http:error-response statusCode="#[vars.httpStatus default 500]">
+                <http:body>#[payload]</http:body>
+                <http:headers>#[{"Content-Type": "application/json"}]</http:headers>
+            </http:error-response>
+        </http:listener>
+        <flow-ref name="post:\chat\completions:application\json:llm-open-connector-config" />
+        <error-handler>
+            <on-error-propagate type="MULE:RETRY_EXHAUSTED">
+                <ee:transform doc:name="Timeout">
+                    <ee:message>
+                        <ee:set-payload><![CDATA[%dw 2.0 output application/json --- {message: "LLM response timed out"}]]></ee:set-payload>
+                    </ee:message>
+                    <ee:variables>
+                        <ee:set-variable variableName="httpStatus">504</ee:set-variable>
+                    </ee:variables>
+                </ee:transform>
+            </on-error-propagate>
+        </error-handler>
+    </flow>
+
+    <!-- POST /api/v1/chat/completions — OpenAI-style path used by Model Builder's
+         "Connect an OpenAI model" setup (it appends /v1/chat/completions to the base URL).
+         Same processing as the Open Connector path above. -->
+    <flow name="llm-openai-compat-main">
+        <http:listener config-ref="llm-open-connector-httpListenerConfig" path="/api/v1/chat/completions">
+            <http:response statusCode="#[vars.httpStatus default 200]">
+                <http:headers>#[{"Content-Type": vars.responseContentType default "application/json"}]</http:headers>
+            </http:response>
+            <http:error-response statusCode="#[vars.httpStatus default 500]">
+                <http:body>#[payload]</http:body>
+                <http:headers>#[{"Content-Type": "application/json"}]</http:headers>
+            </http:error-response>
+        </http:listener>
+        <flow-ref name="post:\chat\completions:application\json:llm-open-connector-config" />
+        <error-handler>
+            <on-error-propagate type="MULE:RETRY_EXHAUSTED">
+                <ee:transform doc:name="Timeout">
+                    <ee:message>
+                        <ee:set-payload><![CDATA[%dw 2.0 output application/json --- {message: "LLM response timed out"}]]></ee:set-payload>
+                    </ee:message>
+                    <ee:variables>
+                        <ee:set-variable variableName="httpStatus">504</ee:set-variable>
+                    </ee:variables>
+                </ee:transform>
+            </on-error-propagate>
+        </error-handler>
+    </flow>
+
+</mule>

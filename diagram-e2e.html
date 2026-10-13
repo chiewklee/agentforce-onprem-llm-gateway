@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Agentforce On-Prem LLM Gateway — End-to-End (async)</title>
+  <style>
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: #f1f5f9;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      padding: 40px;
+    }
+
+    h1 { font-size: 17px; font-weight: 600; color: #1e293b; margin-bottom: 6px; }
+    .subtitle { font-size: 12px; color: #64748b; margin-bottom: 28px; text-align: center; max-width: 380px; }
+
+    /* Zone wrappers */
+    .zone {
+      width: 380px;
+      border-radius: 16px;
+      padding: 20px 24px 24px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 0;
+    }
+
+    .zone-cloud  { background: #dbeafe; border: 2px solid #3b82f6; }
+    .zone-mule   { background: #ede9fe; border: 2px solid #8b5cf6; }
+    .zone-onprem { background: #dcfce7; border: 2px solid #22c55e; }
+
+    .zone-title {
+      font-size: 11px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 1.2px;
+      margin-bottom: 16px;
+      align-self: flex-start;
+    }
+
+    .zone-cloud  .zone-title { color: #1d4ed8; }
+    .zone-mule   .zone-title { color: #6d28d9; }
+    .zone-onprem .zone-title { color: #15803d; }
+
+    /* Boxes */
+    .box {
+      width: 100%;
+      background: #fff;
+      border-radius: 10px;
+      padding: 13px 16px;
+      text-align: center;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.08);
+      border: 1.5px solid #e2e8f0;
+    }
+
+    .box-name { font-size: 13.5px; font-weight: 600; color: #1e293b; margin-bottom: 3px; }
+    .box-sub  { font-size: 11.5px; color: #64748b; }
+    .badge {
+      display: inline-block;
+      font-size: 10px;
+      font-weight: 600;
+      color: #b91c1c;
+      background: #fee2e2;
+      border-radius: 6px;
+      padding: 2px 7px;
+      margin-top: 6px;
+    }
+
+    /* Arrows inside zone */
+    .inner-arrow {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      height: 34px;
+    }
+    .inner-arrow .line { width: 2px; flex: 1; background: #93c5fd; }
+    .inner-arrow.purple .line { background: #c4b5fd; }
+    .inner-arrow.green  .line { background: #86efac; }
+    .inner-arrow .head {
+      width: 0; height: 0;
+      border-left: 6px solid transparent;
+      border-right: 6px solid transparent;
+      border-top: 8px solid #60a5fa;
+    }
+    .inner-arrow.purple .head { border-top-color: #a78bfa; }
+    .inner-arrow.green  .head { border-top-color: #4ade80; }
+
+    /* Arrow between zones */
+    .between-arrow {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      height: 46px;
+    }
+    .between-arrow .line { width: 2px; flex: 1; background: #94a3b8; }
+    .between-arrow .head {
+      width: 0; height: 0;
+      border-left: 7px solid transparent;
+      border-right: 7px solid transparent;
+    }
+    .between-arrow.down .head { border-top: 9px solid #64748b; }
+    .between-arrow.up   .head { border-bottom: 9px solid #64748b; }
+    .between-arrow .label {
+      font-size: 10px; color: #64748b; font-weight: 500; margin: 3px 0;
+    }
+  </style>
+</head>
+<body>
+
+  <h1>Agentforce On-Prem LLM Gateway — End-to-End (async)</h1>
+  <div class="subtitle">Salesforce never reaches into on-premise. The Worker connects outbound only — no CDN, no reverse proxy, no inbound firewall openings.</div>
+
+  <!-- SALESFORCE CLOUD -->
+  <div class="zone zone-cloud">
+    <div class="zone-title">☁️ &nbsp;Salesforce Cloud</div>
+
+    <div class="box">
+      <div class="box-name">Cloud Application</div>
+      <div class="box-sub">Agentforce &nbsp;·&nbsp; Prompt Builder &nbsp;·&nbsp; EDC</div>
+    </div>
+
+    <div class="inner-arrow"><div class="line"></div><div class="head"></div></div>
+
+    <div class="box">
+      <div class="box-name">Einstein Trust Layer</div>
+      <div class="box-sub">mask / demask PII</div>
+    </div>
+
+    <div class="inner-arrow"><div class="line"></div><div class="head"></div></div>
+
+    <div class="box">
+      <div class="box-name">Einstein LLM Gateway</div>
+      <div class="box-sub">BYOLLM &nbsp;·&nbsp; Open Connector</div>
+      <span class="badge">⏱ 120s hard limit &nbsp;·&nbsp; 4,096 tokens</span>
+    </div>
+  </div>
+
+  <!-- SF → CLOUDHUB -->
+  <div class="between-arrow down">
+    <div class="line"></div>
+    <div class="label">HTTPS 443 &nbsp;·&nbsp; Open Connector API</div>
+    <div class="line"></div>
+    <div class="head"></div>
+  </div>
+
+  <!-- MULESOFT CLOUD -->
+  <div class="zone zone-mule">
+    <div class="zone-title">☁️ &nbsp;MuleSoft Cloud · CloudHub 2.0</div>
+
+    <div class="box">
+      <div class="box-name">Agentforce Gateway</div>
+      <div class="box-sub">Open Connector API &nbsp;·&nbsp; POST /api/chat/completions</div>
+    </div>
+
+    <div class="inner-arrow purple"><div class="line"></div><div class="head"></div></div>
+
+    <div class="box">
+      <div class="box-name">Anypoint MQ</div>
+      <div class="box-sub">chat queue &nbsp;·&nbsp; chat-completed queue</div>
+    </div>
+  </div>
+
+  <!-- ON-PREM → CLOUDHUB (outbound, arrow points up) -->
+  <div class="between-arrow up">
+    <div class="head"></div>
+    <div class="line"></div>
+    <div class="label">outbound: subscribe + publish</div>
+    <div class="line"></div>
+  </div>
+
+  <!-- ON-PREM ZONE -->
+  <div class="zone zone-onprem">
+    <div class="zone-title">🖥️ &nbsp;On-Premises · my Mac</div>
+
+    <div class="box">
+      <div class="box-name">Worker</div>
+      <div class="box-sub">MuleSoft &nbsp;·&nbsp; outbound only</div>
+    </div>
+
+    <div class="inner-arrow green"><div class="line"></div><div class="head"></div></div>
+
+    <div class="box">
+      <div class="box-name">Ollama</div>
+      <div class="box-sub">qwen3:32b &nbsp;·&nbsp; llama3:8b &nbsp;·&nbsp; gemma</div>
+    </div>
+  </div>
+
+</body>
+</html>
